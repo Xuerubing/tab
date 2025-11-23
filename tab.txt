@@ -55,14 +55,14 @@
 
   <label>
     板 A 的 p<sub>A</sub>（蓝）：
-    <input id="pRightA" type="range" min="0" max="1" step="0.01" value="0.70">
-    <span id="pAVal">0.70</span>
+    <input id="pRightA" type="range" min="0" max="1" step="0.01" value="0.80">
+    <span id="pAVal">0.80</span>
   </label>
 
   <label>
     板 B 的 p<sub>B</sub>（橙）：
-    <input id="pRightB" type="range" min="0" max="1" step="0.01" value="0.40">
-    <span id="pBVal">0.40</span>
+    <input id="pRightB" type="range" min="0" max="1" step="0.01" value="0.20">
+    <span id="pBVal">0.20</span>
   </label>
 
   <label>
@@ -86,8 +86,8 @@
 
   <label>
     θ<sub>n,c</sub> 的 n：
-    <input id="nTheta" type="range" min="20" max="4000" step="100" value="2000">
-    <span id="nThetaVal">2000</span>
+    <input id="nTheta" type="range" min="20" max="12000" step="100" value="6000">
+    <span id="nThetaVal">6000</span>
   </label>
 
   <label>
