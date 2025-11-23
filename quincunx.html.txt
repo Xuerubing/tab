@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Quincunx Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0;
+      padding: 10px;
+    }
+    #controls {
+      margin-bottom: 10px;
+    }
+    label {
+      margin-right: 20px;
+    }
+    canvas {
+      background: #ffffff;
+      border: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <h3>简化版 Quincunx（高尔顿板）</h3>
+  <div id="controls">
+    <label>
+      层数：
+      <input id="levels" type="range" min="3" max="12" value="8">
+      <span id="levelsVal">8</span>
+    </label>
+    <label>
+      向右概率 p：
+      <input id="pRight" type="range" min="0" max="1" step="0.01" value="0.50">
+      <span id="pVal">0.50</span>
+    </label>
+  </div>
+  <canvas id="canvas" width="600" height="500"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const levelsSlider = document.getElementById('levels');
+    const levelsVal = document.getElementById('levelsVal');
+    const pSlider = document.getElementById('pRight');
+    const pVal = document.getElementById('pVal');
+
+    let levels = parseInt(levelsSlider.value, 10);
+    let pRight = parseFloat(pSlider.value);
+
+    levelsSlider.addEventListener('input', () => {
+      levels = parseInt(levelsSlider.value, 10);
+      levelsVal.textContent = levels;
+      resetBins();
+    });
+
+    pSlider.addEventListener('input', () => {
+      pRight = parseFloat(pSlider.value);
+      pVal.textContent = pRight.toFixed(2);
+    });
+
+    // 画布布局参数
+    const W = canvas.width;
+    const H = canvas.height;
+    const topMargin = 40;
+    const bottomMargin = 120;
+    const pegRadius = 3;
+    const ballRadius = 4;
+    const ballSpeed = 0.02; // 每帧向下一点（0~1 层间单位）
+    const ballsPerSec = 5;  // 每秒发射几个球
+
+    // peg 与槽的布局会随 levels 变化，只要以 [0,1] 的归一化坐标来画就行
+    function pegX(col, rowCount) {
+      // col: 0..rowCount
+      const span = W * 0.6;
+      const left = (W - span) / 2;
+      const step = span / rowCount;
+      return left + col * step;
+    }
+
+    function pegY(rowIdx) {
+      // rowIdx: 0..levels-1 -> 上到下
+      const span = H - topMargin - bottomMargin;
+      const step = span / (levels + 1);
+      return topMargin + (rowIdx + 1) * step;
+    }
+
+    // 底部直方图区域
+    const histTop = H - bottomMargin + 30;
+    const histHeight = bottomMargin - 50;
+
+    let bins = [];
+
+    function resetBins() {
+      bins = new Array(levels + 1).fill(0);
+    }
+    resetBins();
+
+    // 小球对象：在 peg 之间以“层”为单位连续移动
+    class Ball {
+      constructor() {
+        this.row = -1; // 还没到第一层 peg
+        this.xNorm = 0; // 归一化横坐标：从 0 开始，向左/右±1
+        this.yProgress = 0; // 当前层内的进度 0~1
+        this.done = false;
+        this.path = []; // 保存每层结束时的 xNorm，以便最终落点统计
+      }
+
+      step(dt) {
+        if (this.done) return;
+        this.yProgress += ballSpeed * dt;
+        // 如果这一层走完了
+        if (this.yProgress >= 1) {
+          this.yProgress = 0;
+          this.row += 1;
+          if (this.row === 0) {
+            // 进入第一层 peg 前，记录当前 x
+            this.path.push(this.xNorm);
+          } else if (this.row <= levels) {
+            // 经过一次 peg，向左或向右
+            const r = Math.random();
+            if (r < pRight) this.xNorm += 1;
+            else this.xNorm -= 1;
+            this.path.push(this.xNorm);
+          }
+
+          // 到达底部：row == levels 表示走完所有 peg
+          if (this.row >= levels) {
+            this.done = true;
+            // 最后一层的 xNorm -> 对应 bin
+            const finalX = this.path[this.path.length - 1];
+            // finalX ∈ {-levels, -levels+2, ..., levels}
+            const idx = (finalX + levels) / 2;
+            if (idx >= 0 && idx < bins.length) {
+              bins[Math.round(idx)] += 1;
+            }
+          }
+        }
+      }
+
+      draw(ctx) {
+        if (this.done) return;
+        // 当前所在“层中位置”的 y
+        const span = H - topMargin - bottomMargin;
+        const step = span / (levels + 1);
+        const y = topMargin + this.yProgress * step + (this.row + 1) * step;
+
+        // 基于当前层的 xNorm 计算物理坐标
+        // xNorm = -levels,...,+levels，步长2
+        const maxCols = levels;
+        const normMin = -maxCols;
+        const normMax = +maxCols;
+        const spanX = W * 0.6;
+        const leftX = (W - spanX) / 2;
+        const stepX = spanX / (normMax - normMin);
+        const x = leftX + (this.xNorm - normMin) * stepX;
+
+        ctx.beginPath();
+        ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0, 120, 255, 0.8)";
+        ctx.fill();
+      }
+    }
+
+    let balls = [];
+    let lastTime = null;
+    let emitAccumulator = 0;
+
+    function emitBalls(dt) {
+      emitAccumulator += dt;
+      const interval = 1000 / ballsPerSec;
+      while (emitAccumulator > interval) {
+        emitAccumulator -= interval;
+        balls.push(new Ball());
+      }
+      // 控制 balls 数量上限，避免太多
+      if (balls.length > 300) {
+        balls = balls.filter(b => !b.done);
+      }
+    }
+
+    function drawPegs() {
+      ctx.fillStyle = "#444";
+      for (let r = 0; r < levels; r++) {
+        for (let c = 0; c <= r; c++) {
+          const x = pegX(c, r);
+          const y = pegY(r);
+          ctx.beginPath();
+          ctx.arc(x, y, pegRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawHistogram() {
+      const maxCount = Math.max(1, ...bins);
+      const barWidth = (W * 0.6) / bins.length;
+      const left = (W - W * 0.6) / 2;
+
+      for (let i = 0; i < bins.length; i++) {
+        const h = (bins[i] / maxCount) * histHeight;
+        const x = left + i * barWidth;
+        const y = histTop + histHeight - h;
+        ctx.fillStyle = "#888";
+        ctx.fillRect(x, y, barWidth * 0.9, h);
+      }
+
+      // 画 x 轴
+      ctx.strokeStyle = "#000";
+      ctx.beginPath();
+      ctx.moveTo(left, histTop + histHeight);
+      ctx.lineTo(left + bins.length * barWidth, histTop + histHeight);
+      ctx.stroke();
+    }
+
+    function drawBackground() {
+      ctx.clearRect(0, 0, W, H);
+      // 上下分界线
+      ctx.strokeStyle = "#ccc";
+      ctx.beginPath();
+      ctx.moveTo(0, H - bottomMargin);
+      ctx.lineTo(W, H - bottomMargin);
+      ctx.stroke();
+    }
+
+    function loop(timestamp) {
+      if (lastTime === null) lastTime = timestamp;
+      const dt = timestamp - lastTime;
+      lastTime = timestamp;
+
+      emitBalls(dt);
+
+      // 更新所有球
+      balls.forEach(b => b.step(dt));
+
+      // 绘制
+      drawBackground();
+      drawPegs();
+      balls.forEach(b => b.draw(ctx));
+      drawHistogram();
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
