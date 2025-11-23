@@ -49,8 +49,8 @@
 <div id="controls">
   <label>
     层数：
-    <input id="levels" type="range" min="3" max="18" value="12">
-    <span id="levelsVal">12</span>
+    <input id="levels" type="range" min="3" max="30" value="15">
+    <span id="levelsVal">15</span>
   </label>
 
   <label>
@@ -85,17 +85,12 @@
   </label>
 
   <label>
-    θ<sub>n,c</sub> 的 n：
-    <input id="nTheta" type="range" min="20" max="12000" step="100" value="6000">
-    <span id="nThetaVal">6000</span>
-  </label>
-
-  <label>
     速度：
     <input id="speed" type="range" min="0.2" max="3" step="0.1" value="1">
     <span id="speedVal">1.0x</span>
   </label>
 
+  <button id="pauseBtn">暂停</button>
   <button id="resetBtn">重置</button>
 </div>
 
@@ -124,12 +119,10 @@
   const cSlider = document.getElementById('cParam');
   const cVal = document.getElementById('cVal');
 
-  const nThetaSlider = document.getElementById('nTheta');
-  const nThetaVal = document.getElementById('nThetaVal');
-
   const speedSlider = document.getElementById('speed');
   const speedVal = document.getElementById('speedVal');
 
+  const pauseBtn = document.getElementById('pauseBtn');
   const resetBtn = document.getElementById('resetBtn');
   const infoText = document.getElementById('infoText');
 
@@ -139,14 +132,13 @@
   let pRightB = parseFloat(pRightBSlider.value);
   let strategy = strategySelect.value;
   let cParam = parseFloat(cSlider.value);
-  let nTheta = parseInt(nThetaSlider.value, 10);
   let speedFactor = parseFloat(speedSlider.value);
+  let paused = false;
 
   levelsVal.textContent = levels;
   pAVal.textContent = pRightA.toFixed(2);
   pBVal.textContent = pRightB.toFixed(2);
   cVal.textContent = cParam.toFixed(2);
-  nThetaVal.textContent = nTheta.toString();
   speedVal.textContent = speedFactor.toFixed(1) + 'x';
 
   levelsSlider.addEventListener('input', () => {
@@ -177,15 +169,14 @@
     recomputeArms();
   });
 
-  nThetaSlider.addEventListener('input', () => {
-    nTheta = parseInt(nThetaSlider.value, 10);
-    nThetaVal.textContent = nTheta.toString();
-    recomputeArms();
-  });
-
   speedSlider.addEventListener('input', () => {
     speedFactor = parseFloat(speedSlider.value);
     speedVal.textContent = speedFactor.toFixed(1) + 'x';
+  });
+
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? '继续' : '暂停';
   });
 
   resetBtn.addEventListener('click', () => {
@@ -262,8 +253,8 @@
   let boardCounts = [0, 0]; // [A, B]
 
   // ===== strategic / worse-strategic 离线臂序列 =====
-  let strategicArms = [];       // 0/1 长度 nTheta
-  let worseStrategicArms = [];  // 0/1 长度 nTheta
+  let strategicArms = [];       // 0/1 长度 = levels
+  let worseStrategicArms = [];  // 0/1 长度 = levels
 
   function muA() {
     return 2 * pRightA - 1;
@@ -341,7 +332,7 @@
   }
 
   function recomputeArms() {
-    const n = nTheta;
+    const n = levels;
     const muL = muA();
     const muR = muB();
     const sigma = 1.0;
@@ -377,7 +368,7 @@
         if (this.row === 0) {
           // 刚进入第一层前，不动 xNorm
         } else if (this.row <= levels) {
-          const board = chooseBoardWithStrategy(pegDecisionCount);
+          const board = chooseBoardWithStrategy(this.row);
           const pRight = (board === 0 ? pRightA : pRightB);
           this.lastBoard = board;
 
@@ -457,22 +448,13 @@
     }
   }
 
-  function chooseBoardWithStrategy(trialIndex = pegDecisionCount) {
+  function chooseBoardWithStrategy(rowIndex) {
     if (strategy === 'strategic') {
-      if (trialIndex < nTheta) {
-        return strategicArms[trialIndex];  // 0/1
-      } else {
-        // 超过 n 后，退回 random
-        return chooseBoardBasic(trialIndex, 'random');
-      }
+      return strategicArms[(rowIndex - 1 + levels) % levels];
     } else if (strategy === 'worse_strategic') {
-      if (trialIndex < nTheta) {
-        return worseStrategicArms[trialIndex];
-      } else {
-        return chooseBoardBasic(trialIndex, 'random');
-      }
+      return worseStrategicArms[(rowIndex - 1 + levels) % levels];
     } else {
-      return chooseBoardBasic(trialIndex, strategy);
+      return chooseBoardBasic(rowIndex, strategy);
     }
   }
 
@@ -674,6 +656,8 @@
     pegDecisionCount = 0;
     finishedBalls = 0;
     recomputeArms();
+    paused = false;
+    pauseBtn.textContent = '暂停';
   }
 
   // ===== 主循环 =====
@@ -682,13 +666,40 @@
     const dt = timestamp - lastTime;
     lastTime = timestamp;
 
+    let stats = computeStats();
+
+    if (paused) {
+      drawBackground();
+      drawPegs();
+      balls.forEach(b => b.draw(ctx));
+      drawHistogram(stats);
+      drawDetailInset(stats);
+
+      const totalDecisions = boardCounts[0] + boardCounts[1];
+      const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
+      const ratioB = totalDecisions > 0 ? (boardCounts[1] / totalDecisions) : 0;
+
+      infoText.textContent =
+        `状态 = 暂停 | 策略 = ${strategy} | ` +
+        `已落完球数 = ${finishedBalls} | ` +
+        `撞钉决策次数 = ${totalDecisions} | ` +
+        `板 A 次数 = ${boardCounts[0]} (${(ratioA*100).toFixed(1)}%) , ` +
+        `板 B 次数 = ${boardCounts[1]} (${(ratioB*100).toFixed(1)}%) | ` +
+        `p_A = ${pRightA.toFixed(2)} , p_B = ${pRightB.toFixed(2)} | ` +
+        `θ_{n,c} 参数：c = ${cParam.toFixed(2)}, n = 层数 ${levels} | ` +
+        `拟合 μ = ${stats.total > 0 ? stats.mean.toFixed(2) : '—'} , σ = ${stats.total > 0 ? stats.std.toFixed(2) : '—'}`;
+
+      requestAnimationFrame(loop);
+      return;
+    }
+
     const ballSpeed = baseBallSpeed * speedFactor;
     const ballsPerSec = baseBallsPerSec * speedFactor;
 
     emitBalls(dt, ballsPerSec);
     balls.forEach(b => b.step(dt, ballSpeed));
 
-    const stats = computeStats();
+    stats = computeStats();
 
     drawBackground();
     drawPegs();
@@ -701,13 +712,13 @@
     const ratioB = totalDecisions > 0 ? (boardCounts[1] / totalDecisions) : 0;
 
     infoText.textContent =
-      `策略 = ${strategy} | ` +
+      `状态 = 运行 | 策略 = ${strategy} | ` +
       `已落完球数 = ${finishedBalls} | ` +
       `撞钉决策次数 = ${totalDecisions} | ` +
       `板 A 次数 = ${boardCounts[0]} (${(ratioA*100).toFixed(1)}%) , ` +
       `板 B 次数 = ${boardCounts[1]} (${(ratioB*100).toFixed(1)}%) | ` +
       `p_A = ${pRightA.toFixed(2)} , p_B = ${pRightB.toFixed(2)} | ` +
-      `θ_{n,c} 参数：c = ${cParam.toFixed(2)}, n = ${nTheta} | ` +
+      `θ_{n,c} 参数：c = ${cParam.toFixed(2)}, n = 层数 ${levels} | ` +
       `拟合 μ = ${stats.total > 0 ? stats.mean.toFixed(2) : '—'} , σ = ${stats.total > 0 ? stats.std.toFixed(2) : '—'}`;
 
     requestAnimationFrame(loop);
