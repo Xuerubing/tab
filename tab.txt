@@ -49,8 +49,8 @@
 <div id="controls">
   <label>
     层数：
-    <input id="levels" type="range" min="3" max="12" value="8">
-    <span id="levelsVal">8</span>
+    <input id="levels" type="range" min="3" max="18" value="12">
+    <span id="levelsVal">12</span>
   </label>
 
   <label>
@@ -86,8 +86,8 @@
 
   <label>
     θ<sub>n,c</sub> 的 n：
-    <input id="nTheta" type="range" min="20" max="400" step="10" value="200">
-    <span id="nThetaVal">200</span>
+    <input id="nTheta" type="range" min="20" max="4000" step="100" value="2000">
+    <span id="nThetaVal">2000</span>
   </label>
 
   <label>
@@ -99,7 +99,7 @@
   <button id="resetBtn">重置</button>
 </div>
 
-<canvas id="canvas" width="900" height="520"></canvas>
+<canvas id="canvas" width="900" height="640"></canvas>
 
 <div id="info">
   <span id="infoText"></span>
@@ -196,22 +196,40 @@
   const W = canvas.width;
   const H = canvas.height;
 
-  const boardBottomY = H * 0.6;          // 上方板区域底部
-  const topMargin = 40;
+  const boardBottomY = H * 0.62;          // 上方板区域底部
+  const topMargin = 36;
 
-  const histTop = H * 0.62;             // 直方图区域
-  const histHeight = H * 0.3;
+  const histTop = H * 0.65;             // 直方图区域
+  const histHeight = H * 0.28;
 
   const pegRadius = 3;
   const ballRadius = 4;
 
-  const baseBallSpeed = 0.02;
-  const baseBallsPerSec = 5;
+  const minRowSpanRatio = 0.35; // 顶部宽度占比
+  const maxRowSpanRatio = 0.8;  // 底部宽度占比
+  const triangleEasePower = 1.1; // 控制变宽的平滑度
+
+  const baseBallSpeed = 0.022;
+  const baseBallsPerSec = 15;
+
+  const histTargetBalls = 3200; // 约达到这数量时柱子接近满高
 
   let balls = [];
   let lastTime = null;
   let emitAccumulator = 0;
   let ballCount = 0;
+  let pegDecisionCount = 0; // 记录每次撞钉子的决策序号
+  let finishedBalls = 0;
+
+  function getRowGeometry(rowIndex) {
+    const cappedRow = Math.max(0, Math.min(levels, rowIndex));
+    const t = levels <= 1 ? 1 : Math.pow(cappedRow / (levels - 1), triangleEasePower);
+    const rowSpan = W * (minRowSpanRatio + (maxRowSpanRatio - minRowSpanRatio) * t);
+    const leftX = (W - rowSpan) / 2;
+    const rowCols = cappedRow + 1;
+    const stepX = rowCols > 1 ? rowSpan / (rowCols - 1) : 0;
+    return { leftX, rowSpan, stepX, rowCols };
+  }
 
   // 直方图 bins（混合）
   let bins = [];
@@ -223,7 +241,7 @@
     return (xNorm + levels) / 2; // xNorm ∈ {-levels,-levels+2,...,levels}
   }
 
-  // 板使用次数
+  // 板使用次数（按每次撞钉子计数）
   let boardCounts = [0, 0]; // [A, B]
 
   // ===== strategic / worse-strategic 离线臂序列 =====
@@ -320,13 +338,12 @@
 
   // ===== Ball 类 =====
   class Ball {
-    constructor(board, pRight) {
-      this.board = board;   // 0=A, 1=B
-      this.pRight = pRight;
+    constructor() {
       this.row = -1;
       this.xNorm = 0;
       this.yProgress = 0;
       this.done = false;
+      this.lastBoard = 0;  // 最近一次撞钉子的板，用于着色
     }
 
     step(dt, ballSpeed) {
@@ -343,21 +360,29 @@
         if (this.row === 0) {
           // 刚进入第一层前，不动 xNorm
         } else if (this.row <= levels) {
+          const board = chooseBoardWithStrategy(pegDecisionCount);
+          const pRight = (board === 0 ? pRightA : pRightB);
+          this.lastBoard = board;
+
           const r = Math.random();
-          if (r < this.pRight) this.xNorm += 1;
+          if (r < pRight) this.xNorm += 1;
           else this.xNorm -= 1;
+
+          boardCounts[board] += 1;
+          pegDecisionCount += 1;
         }
 
         if (this.row >= levels) {
           this.done = true;
 
-          // 落地 -> 更新直方图 + 板次数
+          finishedBalls += 1;
+
+          // 落地 -> 更新直方图
           const finalX = this.xNorm;
           const idx = xNormToBinIndex(finalX);
           if (idx >= 0 && idx < bins.length) {
             bins[Math.round(idx)] += 1;
           }
-          boardCounts[this.board] += 1;
         }
       }
     }
@@ -369,17 +394,16 @@
       const stepY = spanY / (levels + 1);
       const y = topMargin + this.yProgress * stepY + (this.row + 1) * stepY;
 
-      const maxCols = levels;
-      const normMin = -maxCols;
-      const normMax = +maxCols;
-      const spanX = W * 0.6;
-      const leftX = (W - spanX) / 2;
-      const stepX = spanX / (normMax - normMin);
-      const x = leftX + (this.xNorm - normMin) * stepX;
+      const rowUsed = Math.max(this.row, 0);
+      const geom = getRowGeometry(rowUsed);
+      const colIndex = (this.xNorm + rowUsed) / 2;
+      const x = geom.rowCols === 1
+        ? W / 2
+        : geom.leftX + colIndex * geom.stepX;
 
       ctx.beginPath();
       ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
-      ctx.fillStyle = (this.board === 0)
+      ctx.fillStyle = (this.lastBoard === 0)
         ? "rgba(0, 120, 255, 0.85)"
         : "rgba(255, 140, 0, 0.85)";
       ctx.fill();
@@ -403,22 +427,22 @@
     }
   }
 
-  function chooseBoardWithStrategy(ballIndex) {
+  function chooseBoardWithStrategy(trialIndex = pegDecisionCount) {
     if (strategy === 'strategic') {
-      if (ballIndex < nTheta) {
-        return strategicArms[ballIndex];  // 0/1
+      if (trialIndex < nTheta) {
+        return strategicArms[trialIndex];  // 0/1
       } else {
         // 超过 n 后，退回 random
-        return chooseBoardBasic(ballIndex, 'random');
+        return chooseBoardBasic(trialIndex, 'random');
       }
     } else if (strategy === 'worse_strategic') {
-      if (ballIndex < nTheta) {
-        return worseStrategicArms[ballIndex];
+      if (trialIndex < nTheta) {
+        return worseStrategicArms[trialIndex];
       } else {
-        return chooseBoardBasic(ballIndex, 'random');
+        return chooseBoardBasic(trialIndex, 'random');
       }
     } else {
-      return chooseBoardBasic(ballIndex, strategy);
+      return chooseBoardBasic(trialIndex, strategy);
     }
   }
 
@@ -429,9 +453,7 @@
 
     while (emitAccumulator > interval) {
       emitAccumulator -= interval;
-      const board = chooseBoardWithStrategy(ballCount);
-      const p = (board === 0 ? pRightA : pRightB);
-      balls.push(new Ball(board, p));
+      balls.push(new Ball());
       ballCount += 1;
     }
 
@@ -443,41 +465,30 @@
   // ===== 绘图 =====
   function drawPegs() {
     ctx.fillStyle = "#444";
-    const spanX = W * 0.6;
-    const leftX = (W - spanX) / 2;
     const spanY = boardBottomY - topMargin;
     const stepY = spanY / (levels + 1);
 
     for (let r = 0; r < levels; r++) {
-      const rowCols = r + 1;
-      if (rowCols === 1) {
-        const x = W / 2;
-        const y = topMargin + (r + 1) * stepY;
+      const { leftX, stepX, rowCols } = getRowGeometry(r);
+      const y = topMargin + (r + 1) * stepY;
+      for (let c = 0; c < rowCols; c++) {
+        const x = rowCols === 1 ? W / 2 : leftX + c * stepX;
         ctx.beginPath();
         ctx.arc(x, y, pegRadius, 0, Math.PI * 2);
         ctx.fill();
-      } else {
-        const stepX = spanX / (rowCols - 1);
-        const y = topMargin + (r + 1) * stepY;
-        for (let c = 0; c < rowCols; c++) {
-          const x = leftX + c * stepX;
-          ctx.beginPath();
-          ctx.arc(x, y, pegRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
       }
     }
   }
 
   function drawHistogram() {
-    const maxCount = Math.max(1, ...bins);
-    const spanX = W * 0.6;
+    const spanX = W * 0.72;
     const leftX = (W - spanX) / 2;
     const barWidth = spanX / bins.length;
+    const pixelsPerBall = histHeight / histTargetBalls;
 
     // 灰色条形
     for (let i = 0; i < bins.length; i++) {
-      const h = (bins[i] / maxCount) * histHeight;
+      const h = Math.min(histHeight, bins[i] * pixelsPerBall);
       const x = leftX + i * barWidth;
       const y = histTop + histHeight - h;
       ctx.fillStyle = "#bbbbbb";
@@ -489,7 +500,7 @@
     ctx.beginPath();
     let first = true;
     for (let i = 0; i < bins.length; i++) {
-      const h = (bins[i] / maxCount) * histHeight;
+      const h = Math.min(histHeight, bins[i] * pixelsPerBall);
       const xCenter = leftX + i * barWidth + barWidth * 0.4;
       const yTop = histTop + histHeight - h;
       if (first) {
@@ -520,7 +531,7 @@
 
     ctx.fillStyle = "#000";
     ctx.font = "14px sans-serif";
-    ctx.fillText("上：两板高尔顿板   中：混合落点直方图（轮廓线更清晰）",
+    ctx.fillText("上：两板高尔顿板（锥形布局）   中：混合落点直方图（绝对计数，约 3200 球满高）",
       10, 20);
   }
 
@@ -530,6 +541,8 @@
     emitAccumulator = 0;
     resetBins();
     boardCounts = [0, 0];
+    pegDecisionCount = 0;
+    finishedBalls = 0;
     recomputeArms();
   }
 
@@ -550,13 +563,14 @@
     balls.forEach(b => b.draw(ctx));
     drawHistogram();
 
-    const totalDone = boardCounts[0] + boardCounts[1];
-    const ratioA = totalDone > 0 ? (boardCounts[0] / totalDone) : 0;
-    const ratioB = totalDone > 0 ? (boardCounts[1] / totalDone) : 0;
+    const totalDecisions = boardCounts[0] + boardCounts[1];
+    const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
+    const ratioB = totalDecisions > 0 ? (boardCounts[1] / totalDecisions) : 0;
 
     infoText.textContent =
       `策略 = ${strategy} | ` +
-      `已落完球数 = ${totalDone} | ` +
+      `已落完球数 = ${finishedBalls} | ` +
+      `撞钉决策次数 = ${totalDecisions} | ` +
       `板 A 次数 = ${boardCounts[0]} (${(ratioA*100).toFixed(1)}%) , ` +
       `板 B 次数 = ${boardCounts[1]} (${(ratioB*100).toFixed(1)}%) | ` +
       `p_A = ${pRightA.toFixed(2)} , p_B = ${pRightB.toFixed(2)} | ` +
