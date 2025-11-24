@@ -105,7 +105,7 @@
 
     <label>
       <input id="showSwitch" type="checkbox" checked>
-      显示臂切换提示
+      显示每层臂切换色带
     </label>
 
     <button id="pauseBtn">暂停</button>
@@ -193,6 +193,10 @@
       showSwitch = showSwitchCheckbox.checked;
     });
 
+    showSwitchCheckbox.addEventListener('change', () => {
+      showSwitch = showSwitchCheckbox.checked;
+    });
+
     pauseBtn.addEventListener('click', () => {
       paused = !paused;
       pauseBtn.textContent = paused ? '继续' : '暂停';
@@ -233,6 +237,14 @@
     let ballCount = 0;
     let pegDecisionCount = 0; // 统计撞钉子总决策次数
     let finishedBalls = 0;
+
+    resetRowBands();
+
+    // 每一层最近一次策略选板，用于色带提示
+    let rowBandPulses = [];
+    function resetRowBands() {
+      rowBandPulses = new Array(levels).fill(null).map(() => ({ board: null, pulse: 0 }));
+    }
 
     // 最近一次策略选板，用于可视化切换
     let lastBoardSelection = null; // 0 = A, 1 = B
@@ -396,8 +408,10 @@
 
             const pRight = (board === 0 ? pRightA : pRightB);
             this.lastBoard = board;
-            lastBoardSelection = board;
-            selectionPulse = 1;
+
+            // 为当前层记录色带脉冲
+            const bandIndex = Math.max(0, Math.min(levels - 1, this.row - 1));
+            rowBandPulses[bandIndex] = { board, pulse: 1 };
 
             const r = Math.random();
             if (r < pRight) this.xNorm += 1;
@@ -637,6 +651,78 @@
       );
     }
 
+    function updateRowBandPulse(dt) {
+      const decay = dt * 0.0012;
+      for (let i = 0; i < rowBandPulses.length; i++) {
+        const p = rowBandPulses[i];
+        if (p && p.pulse > 0) {
+          p.pulse = Math.max(0, p.pulse - decay);
+        }
+      }
+    }
+
+    function drawRowBands() {
+      if (!showSwitch) return;
+      const stepY = spanY / (levels + 1);
+      const bandH = stepY * 0.62;
+
+      for (let r = 0; r < levels; r++) {
+        const p = rowBandPulses[r];
+        if (!p || p.pulse <= 0 || p.board === null) continue;
+
+        const base = p.board === 0 ? "0,120,255" : "255,140,0";
+        const alpha = 0.10 + 0.28 * p.pulse;
+        ctx.fillStyle = `rgba(${base}, ${alpha})`;
+
+        const yCenter = topMargin + (r + 1) * stepY;
+        ctx.fillRect(0, yCenter - bandH / 2, W, bandH);
+      }
+    }
+
+    function drawStrategyIndicator() {
+      const boxW = 180;
+      const boxH = 72;
+      const x = W - boxW - 14;
+      const y = 10;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.strokeStyle = "#999";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#333";
+      ctx.fillText("臂颜色标记（常显）", x + 10, y + 16);
+
+      const badgeW = 68;
+      const badgeH = 24;
+      const gap = 10;
+
+      ctx.fillStyle = "rgba(0,120,255,0.72)";
+      ctx.beginPath();
+      ctx.roundRect(x + 10, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("A 板 (蓝)", x + 16, y + 40);
+
+      ctx.fillStyle = "rgba(255,140,0,0.72)";
+      ctx.beginPath();
+      ctx.roundRect(x + 10 + badgeW + gap, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("B 板 (橙)", x + 14 + badgeW + gap, y + 40);
+
+      ctx.fillStyle = "#666";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("提示: 行色带可用上方开关关闭", x + 10, y + 58);
+
+      ctx.restore();
+    }
+
     function drawStrategyIndicator() {
       const boxW = 180;
       const boxH = 72;
@@ -725,6 +811,7 @@
       finishedBalls = 0;
       paused = false;
       pauseBtn.textContent = '暂停';
+      resetRowBands();
     }
 
     // ===== 主循环 =====
@@ -732,14 +819,13 @@
       if (lastTime === null) lastTime = timestamp;
       const dt = timestamp - lastTime;
       lastTime = timestamp;
-
-      // 让策略切换指示逐渐淡出
-      selectionPulse = Math.max(0, selectionPulse - dt * 0.0015);
+      updateRowBandPulse(dt);
 
       let stats = computeStats();
 
       if (paused) {
         drawBackground();
+        drawRowBands();
         drawPegs();
         drawStrategyIndicator();
         balls.forEach(b => b.draw(ctx));
@@ -773,6 +859,7 @@
       stats = computeStats();
 
       drawBackground();
+      drawRowBands();
       drawPegs();
       drawStrategyIndicator();
       balls.forEach(b => b.draw(ctx));
