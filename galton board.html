@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Two-Board Galton (Bandit 风格)</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f4f4f4;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #controls {
+      margin: 10px;
+      padding: 10px 14px;
+      background: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 14px;
+    }
+    #controls label {
+      margin-right: 10px;
+    }
+    #controls input[type=range] {
+      vertical-align: middle;
+    }
+    #controls select {
+      vertical-align: middle;
+    }
+    #controls button {
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #fafafa;
+      cursor: pointer;
+    }
+    #controls button:hover {
+      background: #f0f0f0;
+    }
+    #infoText {
+      margin: 6px;
+      font-size: 12px;
+      color: #333;
+      max-width: 960px;
+    }
+    canvas {
+      background: #ffffff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h3>双板 Galton Board（每个球 = 一次独立 bandit 学习实验）</h3>
+
+  <div id="controls">
+    <label>
+      层数：
+      <input id="levels" type="range" min="3" max="60" value="40">
+      <span id="levelsVal">40</span>
+    </label>
+
+    <label>
+      板 A 右移概率 p<sub>A</sub>：
+      <input id="pRightA" type="range" min="0" max="1" step="0.01" value="0.8">
+      <span id="pAVal">0.80</span>
+    </label>
+
+    <label>
+      板 B 右移概率 p<sub>B</sub>：
+      <input id="pRightB" type="range" min="0" max="1" step="0.01" value="0.2">
+      <span id="pBVal">0.20</span>
+    </label>
+
+    <label>
+      策略：
+      <select id="strategy">
+        <option value="random">random</option>
+        <option value="alternate">alternate (A,B,A,B,...)</option>
+        <option value="only_high">only_high (全 A)</option>
+        <option value="only_low">only_low (全 B)</option>
+        <option value="two_to_one">two_to_one (2/3 选 A)</option>
+        <option value="strategic">strategic θ<sub>n,c</sub></option>
+        <option value="worse_strategic">worse_strategic</option>
+      </select>
+    </label>
+
+    <label>
+      θ<sub>n,c</sub> 的 c：
+      <input id="cParam" type="range" min="-1" max="1" step="0.02" value="0">
+      <span id="cVal">0.00</span>
+    </label>
+
+    <label>
+      速度：
+      <input id="speed" type="range" min="0.4" max="3" step="0.1" value="1">
+      <span id="speedVal">1.0x</span>
+    </label>
+
+    <button id="pauseBtn">暂停</button>
+    <button id="resetBtn">重置</button>
+  </div>
+
+  <div id="infoText"></div>
+
+  <canvas id="canvas" width="960" height="720"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // ===== 控件 =====
+    const levelsSlider = document.getElementById('levels');
+    const levelsVal = document.getElementById('levelsVal');
+
+    const pRightASlider = document.getElementById('pRightA');
+    const pAVal = document.getElementById('pAVal');
+
+    const pRightBSlider = document.getElementById('pRightB');
+    const pBVal = document.getElementById('pBVal');
+
+    const strategySelect = document.getElementById('strategy');
+
+    const cSlider = document.getElementById('cParam');
+    const cVal = document.getElementById('cVal');
+
+    const speedSlider = document.getElementById('speed');
+    const speedVal = document.getElementById('speedVal');
+
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const infoText = document.getElementById('infoText');
+
+    // 初始参数
+    let levels = parseInt(levelsSlider.value, 10);
+    let pRightA = parseFloat(pRightASlider.value);
+    let pRightB = parseFloat(pRightBSlider.value);
+    let strategy = strategySelect.value;
+    let cParam = parseFloat(cSlider.value);
+    let speedFactor = parseFloat(speedSlider.value);
+    let paused = false;
+
+    levelsVal.textContent = levels;
+    pAVal.textContent = pRightA.toFixed(2);
+    pBVal.textContent = pRightB.toFixed(2);
+    cVal.textContent = cParam.toFixed(2);
+    speedVal.textContent = speedFactor.toFixed(1) + 'x';
+
+    levelsSlider.addEventListener('input', () => {
+      levels = parseInt(levelsSlider.value, 10);
+      levelsVal.textContent = levels;
+      resetAll();
+    });
+
+    pRightASlider.addEventListener('input', () => {
+      pRightA = parseFloat(pRightASlider.value);
+      pAVal.textContent = pRightA.toFixed(2);
+    });
+
+    pRightBSlider.addEventListener('input', () => {
+      pRightB = parseFloat(pRightBSlider.value);
+      pBVal.textContent = pRightB.toFixed(2);
+    });
+
+    strategySelect.addEventListener('change', () => {
+      strategy = strategySelect.value;
+    });
+
+    cSlider.addEventListener('input', () => {
+      cParam = parseFloat(cSlider.value);
+      cVal.textContent = cParam.toFixed(2);
+    });
+
+    speedSlider.addEventListener('input', () => {
+      speedFactor = parseFloat(speedSlider.value);
+      speedVal.textContent = speedFactor.toFixed(1) + 'x';
+    });
+
+    pauseBtn.addEventListener('click', () => {
+      paused = !paused;
+      pauseBtn.textContent = paused ? '继续' : '暂停';
+    });
+
+    resetBtn.addEventListener('click', () => {
+      resetAll();
+    });
+
+    // ===== 布局参数 =====
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const boardBottomY = H * 0.55;          // 上方板区域底部
+    const topMargin = 36;
+
+    const histTop = H * 0.58;               // 主直方图区域（绝对计数）
+    const histHeight = H * 0.17;
+    const insetGap = H * 0.02;
+    const insetTop = histTop + histHeight + insetGap; // 放大+正态对比区域
+    const insetHeight = H * 0.17;
+
+    const pegRadius = 3;
+    const ballRadius = 4;
+    const maxTrailLength = 48; // 显示小球轨迹长度
+
+    const spanY = boardBottomY - topMargin;
+    const preferredStepXScale = 1.08; // x 间距与 y 间距的比例，让三角网格更均匀
+
+    const baseBallSpeed = 0.022;
+    const baseBallsPerSec = 15;
+
+    const histTargetBalls = 3200; // 约达到这数量时柱子接近满高
+
+    let balls = [];
+    let lastTime = null;
+    let emitAccumulator = 0;
+    let ballCount = 0;
+    let pegDecisionCount = 0; // 统计撞钉子总决策次数
+    let finishedBalls = 0;
+
+    function getRowGeometry(rowIndex) {
+      const cappedRow = Math.max(0, Math.min(levels, rowIndex));
+      const rowCols = cappedRow + 1;
+      const stepY = spanY / (levels + 1);
+      const idealStepX = Math.min(W * 0.9 / Math.max(levels, 1), stepY * preferredStepXScale);
+      const rowSpan = idealStepX * (rowCols - 1);
+      const leftX = (W - rowSpan) / 2;
+      const stepX = rowCols > 1 ? idealStepX : 0;
+      return { leftX, rowSpan, stepX, rowCols };
+    }
+
+    function projectBall(row, xNorm, yProgress) {
+      const stepY = spanY / (levels + 1);
+      const y = topMargin + yProgress * stepY + (row + 1) * stepY;
+
+      const rowUsed = Math.max(row, 0);
+      const geom = getRowGeometry(rowUsed);
+      const colIndex = (xNorm + rowUsed) / 2;
+      const x = geom.rowCols === 1
+        ? W / 2
+        : geom.leftX + colIndex * geom.stepX;
+      return { x, y };
+    }
+
+    // 直方图 bins（混合）
+    let bins = [];
+    function resetBins() {
+      bins = new Array(levels + 1).fill(0);
+    }
+
+    function xNormToBinIndex(xNorm) {
+      return (xNorm + levels) / 2; // xNorm ∈ {-levels,-levels+2,...,levels}
+    }
+
+    // 板使用次数（按每次撞钉子计数）
+    let boardCounts = [0, 0]; // [A, B]
+
+    // 均值函数：把 pRight 映射到 ±1 奖励的 μ
+    function muA() {
+      return 2 * pRightA - 1;
+    }
+    function muB() {
+      return 2 * pRightB - 1;
+    }
+
+    // 简单 Box-Muller 正态
+    function randn(mu, sigma) {
+      const u1 = Math.random();
+      const u2 = Math.random();
+      const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      return mu + sigma * z0;
+    }
+
+    // strategic 的“全局预计算”已经废弃，留个空壳接口防止报错
+    function recomputeArms() {
+      // 现在每个球在自己内部在线更新 T_{m,n}，不再有全局轨迹
+    }
+
+    // ===== 策略选板（非 strategic），按“本球第几步 localStepIndex” =====
+    function chooseBoardBasic(stepIndex, strategyName) {
+      if (strategyName === 'random') {
+        return Math.random() < 0.5 ? 0 : 1;
+      } else if (strategyName === 'alternate') {
+        // 每颗球内部 A,B,A,B,...
+        return stepIndex % 2;
+      } else if (strategyName === 'only_high') {
+        return 0;
+      } else if (strategyName === 'only_low') {
+        return 1;
+      } else if (strategyName === 'two_to_one') {
+        return Math.random() < (2 / 3) ? 0 : 1;
+      } else {
+        return Math.random() < 0.5 ? 0 : 1;
+      }
+    }
+
+    // ===== Ball：每颗球 = 独立 bandit 学习进程 =====
+    class Ball {
+      constructor() {
+        this.row = -1;
+        this.xNorm = 0;
+        this.yProgress = 0;
+        this.done = false;
+
+        // 还没撞过任何板：用 null 表示
+        this.lastBoard = null;
+
+        // 本球“第几次撞 peg”的局部索引：0,1,2,...
+        this.localPegIndex = 0;
+
+        // bandit 统计量（完全局部）
+        this.nHorizon = levels;     // 这个球的 n 就是当前层数
+        this.muL = muA();
+        this.muR = muB();
+        this.sigma = 1.0;
+
+        this.sumZ = 0;
+        this.sumCentered = 0;
+        this.T_prev = 0;            // T_{0,n} = 0
+
+        this.trail = [projectBall(this.row, this.xNorm, this.yProgress)];
+      }
+
+      step(dt, ballSpeed) {
+        if (this.done) return;
+
+        this.yProgress += ballSpeed * dt;
+
+        if (this.yProgress >= 1) {
+          this.yProgress = 0;
+          this.row += 1;
+
+          if (this.row === 0) {
+            // 刚进入第一层前，不动 xNorm
+          } else if (this.row <= levels) {
+            let board;
+
+            // 这个球自己的“第 m 次决策”，m 从 1 开始
+            const m = this.localPegIndex + 1;
+
+            if (strategy === 'strategic' || strategy === 'worse_strategic') {
+              // ===== 在线 θ_{n,c} bandit =====
+              let arm;
+              if (m === 1) {
+                // 第一步：随机选 A/B，保持对称
+                arm = Math.random() < 0.5 ? 0 : 1;
+              } else {
+                // 之后：用上一步 T_{m-1,n} + 阈值决策
+                const weight = 1.0 - ( (m - 1) / this.nHorizon );
+                const thr = cParam - weight * (this.muL + this.muR) / 2.0;
+                if (strategy === 'strategic') {
+                  arm = (this.T_prev <= thr) ? 0 : 1;
+                } else {
+                  // worse：反着选
+                  arm = (this.T_prev <= thr) ? 1 : 0;
+                }
+              }
+
+              // 这一步在选中臂上的奖励（±1 正态模型）
+              const mu_theta = (arm === 0 ? this.muL : this.muR);
+              const z = randn(mu_theta, this.sigma);
+
+              this.sumZ += z;
+              this.sumCentered += (z - mu_theta) / this.sigma;
+              this.T_prev =
+                (this.sumZ / this.nHorizon) +
+                (this.sumCentered / Math.sqrt(this.nHorizon));
+
+              board = arm; // 选的臂就是用的板：0=A，1=B
+            } else {
+              // ===== 普通策略：不带 “学习记忆”，只看本球第几步 =====
+              board = chooseBoardBasic(this.localPegIndex, strategy);
+            }
+
+            this.localPegIndex += 1;
+
+            const pRight = (board === 0 ? pRightA : pRightB);
+            this.lastBoard = board;
+
+            const r = Math.random();
+            if (r < pRight) this.xNorm += 1;
+            else this.xNorm -= 1;
+
+            boardCounts[board] += 1;
+            pegDecisionCount += 1;
+          }
+
+          if (this.row >= levels) {
+            this.done = true;
+            finishedBalls += 1;
+
+            const finalX = this.xNorm;
+            const binIdx = xNormToBinIndex(finalX);
+            if (binIdx >= 0 && binIdx < bins.length) {
+              bins[Math.round(binIdx)] += 1;
+            }
+          }
+        }
+
+        const pos = projectBall(this.row, this.xNorm, this.yProgress);
+        this.trail.push(pos);
+        if (this.trail.length > maxTrailLength) {
+          this.trail.shift();
+        }
+      }
+
+      draw(ctx) {
+        if (this.done) return;
+
+        const pos = projectBall(this.row, this.xNorm, this.yProgress);
+        const x = pos.x;
+        const y = pos.y;
+
+        let colorBase;
+        if (this.lastBoard === 0) {
+          colorBase = "0, 120, 255";       // 最近一次用 A 板：蓝
+        } else if (this.lastBoard === 1) {
+          colorBase = "255, 140, 0";       // 最近一次用 B 板：橙
+        } else {
+          colorBase = "140, 140, 140";     // 还没撞过板：灰
+        }
+
+        ctx.save();
+        ctx.lineWidth = 1.6;
+        for (let i = 1; i < this.trail.length; i++) {
+          const prev = this.trail[i - 1];
+          const curr = this.trail[i];
+          const t = i / this.trail.length;
+          const alpha = 0.12 + 0.55 * t;
+          ctx.strokeStyle = `rgba(${colorBase}, ${alpha})`;
+          ctx.beginPath();
+          ctx.moveTo(prev.x, prev.y);
+          ctx.lineTo(curr.x, curr.y);
+          ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${colorBase}, 0.9)`;
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // ===== 发球 =====
+    function emitBalls(dt, ballsPerSec) {
+      emitAccumulator += dt;
+      const interval = 1000 / ballsPerSec;
+
+      while (emitAccumulator > interval) {
+        emitAccumulator -= interval;
+        balls.push(new Ball());
+        ballCount += 1;
+      }
+
+      if (balls.length > 400) {
+        balls = balls.filter(b => !b.done);
+      }
+    }
+
+    // ===== 高斯辅助 =====
+    const sqrtTwoPi = Math.sqrt(2 * Math.PI);
+    function gaussian(x, mean, std) {
+      return Math.exp(-0.5 * Math.pow((x - mean) / std, 2)) / (std * sqrtTwoPi);
+    }
+
+    function computeStats() {
+      const total = bins.reduce((a, b) => a + b, 0);
+      if (total === 0) {
+        return { total: 0, mean: 0, std: 1 };
+      }
+
+      const positions = bins.map((_, i) => (i * 2 - levels));
+      const mean = positions.reduce((acc, x, i) => acc + x * bins[i], 0) / total;
+      const variance = positions.reduce((acc, x, i) => {
+        const d = x - mean;
+        return acc + d * d * bins[i];
+      }, 0) / total;
+      const std = Math.max(Math.sqrt(Math.max(variance, 1e-6)), 1e-3);
+      return { total, mean, std };
+    }
+
+    function drawHistogram(stats) {
+      const spanX = W * 0.72;
+      const leftX = (W - spanX) / 2;
+      const barWidth = spanX / bins.length;
+      const maxBin = Math.max(...bins, 1);
+      const scaledTarget = Math.max(140, Math.min(histTargetBalls, maxBin * 3.2));
+      const pixelsPerBall = histHeight / scaledTarget;
+
+      ctx.fillStyle = "#f8f8f8";
+      ctx.fillRect(leftX - 8, histTop - 6, spanX + 16, histHeight + 12);
+
+      // 背景热度层
+      for (let i = 0; i < bins.length; i++) {
+        const x = leftX + i * barWidth;
+        const rel = bins[i] / maxBin;
+        const alpha = 0.12 + 0.48 * rel;
+        ctx.fillStyle = `rgba(80, 160, 255, ${alpha})`;
+        ctx.fillRect(x, histTop, barWidth * 0.8, histHeight);
+      }
+
+      // 灰色条形（绝对计数）
+      for (let i = 0; i < bins.length; i++) {
+        const h = Math.min(histHeight, bins[i] * pixelsPerBall);
+        const x = leftX + i * barWidth;
+        const y = histTop + histHeight - h;
+        ctx.fillStyle = "#bbbbbb";
+        ctx.fillRect(x, y, barWidth * 0.8, h);
+      }
+
+      // 顶部轮廓线
+      ctx.strokeStyle = "#444444";
+      ctx.beginPath();
+      let first = true;
+      for (let i = 0; i < bins.length; i++) {
+        const h = Math.min(histHeight, bins[i] * pixelsPerBall);
+        const xCenter = leftX + i * barWidth + barWidth * 0.4;
+        const yTop = histTop + histHeight - h;
+        if (first) {
+          ctx.moveTo(xCenter, yTop);
+          first = false;
+        } else {
+          ctx.lineTo(xCenter, yTop);
+        }
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "#555";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("主直方图：绝对计数（灰）+ 热度层（蓝）", leftX, histTop - 10);
+
+      // x轴
+      ctx.strokeStyle = "#000";
+      ctx.beginPath();
+      ctx.moveTo(leftX, histTop + histHeight);
+      ctx.lineTo(leftX + spanX, histTop + histHeight);
+      ctx.stroke();
+    }
+
+    function drawDetailInset(stats) {
+      const spanX = W * 0.72;
+      const leftX = (W - spanX) / 2;
+      const barWidth = spanX / bins.length;
+
+      const total = stats.total;
+      const freq = bins.map(v => total > 0 ? v / total : 0);
+      const freqMax = total > 0 ? Math.max(...freq, 1e-6) : 1;
+
+      let normalPeak = 0;
+      if (total > 0 && stats.std > 1e-6) {
+        normalPeak = gaussian(stats.mean, stats.mean, stats.std) * 2;
+      }
+
+      const pixelsPerProb = insetHeight / Math.max(freqMax, normalPeak || 0.0001);
+
+      ctx.fillStyle = "#f6f8ff";
+      ctx.fillRect(leftX - 8, insetTop - 8, spanX + 16, insetHeight + 16);
+
+      // 相对频率条形
+      ctx.fillStyle = "rgba(120, 120, 120, 0.85)";
+      for (let i = 0; i < bins.length; i++) {
+        const h = freq[i] * pixelsPerProb;
+        const x = leftX + i * barWidth;
+        const y = insetTop + insetHeight - h;
+        ctx.fillRect(x, y, barWidth * 0.8, h);
+      }
+
+      // 正态拟合线（橙）
+      if (total > 0 && stats.std > 1e-6) {
+        const steps = 240;
+        ctx.strokeStyle = "#ff7f0e";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let s = 0; s <= steps; s++) {
+          const xNorm = -levels + (2 * s / steps) * levels;
+          const prob = gaussian(xNorm, stats.mean, stats.std) * 2;
+          const x = leftX + (s / steps) * spanX;
+          const y = insetTop + insetHeight - prob * pixelsPerProb;
+          if (s === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      ctx.fillStyle = "#555";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("放大：相对频率（灰）+ 拟合正态曲线（橙）", leftX, insetTop - 10);
+
+      // x轴
+      ctx.strokeStyle = "#000";
+      ctx.beginPath();
+      ctx.moveTo(leftX, insetTop + insetHeight);
+      ctx.lineTo(leftX + spanX, insetTop + insetHeight);
+      ctx.stroke();
+    }
+
+    function drawBackground() {
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = "#dddddd";
+      ctx.beginPath();
+      ctx.moveTo(0, boardBottomY);
+      ctx.lineTo(W, boardBottomY);
+      ctx.stroke();
+
+      ctx.fillStyle = "#000";
+      ctx.font = "14px sans-serif";
+      ctx.fillText(
+        "上：两板高尔顿板（每球在线 bandit 学习）   中：绝对计数直方图   下：放大相对频率 + 正态对比",
+        10, 20
+      );
+    }
+
+    function drawPegs() {
+      ctx.fillStyle = "#444";
+      const stepY = spanY / (levels + 1);
+
+      for (let r = 0; r < levels; r++) {
+        const { leftX, stepX, rowCols } = getRowGeometry(r);
+        const y = topMargin + (r + 1) * stepY;
+        for (let c = 0; c < rowCols; c++) {
+          const x = rowCols === 1 ? W / 2 : leftX + c * stepX;
+          ctx.beginPath();
+          ctx.arc(x, y, pegRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function resetAll() {
+      balls = [];
+      ballCount = 0;
+      emitAccumulator = 0;
+      resetBins();
+      boardCounts = [0, 0];
+      pegDecisionCount = 0;
+      finishedBalls = 0;
+      paused = false;
+      pauseBtn.textContent = '暂停';
+    }
+
+    // ===== 主循环 =====
+    function loop(timestamp) {
+      if (lastTime === null) lastTime = timestamp;
+      const dt = timestamp - lastTime;
+      lastTime = timestamp;
+
+      let stats = computeStats();
+
+      if (paused) {
+        drawBackground();
+        drawPegs();
+        balls.forEach(b => b.draw(ctx));
+        drawHistogram(stats);
+        drawDetailInset(stats);
+
+        const totalDecisions = boardCounts[0] + boardCounts[1];
+        const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
+        const ratioB = totalDecisions > 0 ? (boardCounts[1] / totalDecisions) : 0;
+
+        infoText.textContent =
+          `状态 = 暂停 | 策略 = ${strategy} | ` +
+          `已落完球数 = ${finishedBalls} | ` +
+          `撞钉决策次数 = ${totalDecisions} | ` +
+          `板 A 次数 = ${boardCounts[0]} (${(ratioA*100).toFixed(1)}%) , ` +
+          `板 B 次数 = ${boardCounts[1]} (${(ratioB*100).toFixed(1)}%) | ` +
+          `p_A = ${pRightA.toFixed(2)} , p_B = ${pRightB.toFixed(2)} | ` +
+          `θ_{n,c} 参数：c = ${cParam.toFixed(2)}, n = 层数 ${levels} | ` +
+          `拟合 μ = ${stats.total > 0 ? stats.mean.toFixed(2) : '—'} , σ = ${stats.total > 0 ? stats.std.toFixed(2) : '—'}`;
+
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      const ballSpeed = baseBallSpeed * speedFactor;
+      const ballsPerSec = baseBallsPerSec * speedFactor;
+
+      emitBalls(dt, ballsPerSec);
+      balls.forEach(b => b.step(dt, ballSpeed));
+
+      stats = computeStats();
+
+      drawBackground();
+      drawPegs();
+      balls.forEach(b => b.draw(ctx));
+      drawHistogram(stats);
+      drawDetailInset(stats);
+
+      const totalDecisions = boardCounts[0] + boardCounts[1];
+      const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
+      const ratioB = totalDecisions > 0 ? (boardCounts[1] / totalDecisions) : 0;
+
+      infoText.textContent =
+        `状态 = 运行 | 策略 = ${strategy} | ` +
+        `已落完球数 = ${finishedBalls} | ` +
+        `撞钉决策次数 = ${totalDecisions} | ` +
+        `板 A 次数 = ${boardCounts[0]} (${(ratioA*100).toFixed(1)}%) , ` +
+        `板 B 次数 = ${boardCounts[1]} (${(ratioB*100).toFixed(1)}%) | ` +
+        `p_A = ${pRightA.toFixed(2)} , p_B = ${pRightB.toFixed(2)} | ` +
+        `θ_{n,c} 参数：c = ${cParam.toFixed(2)}, n = 层数 ${levels} | ` +
+        `拟合 μ = ${stats.total > 0 ? stats.mean.toFixed(2) : '—'} , σ = ${stats.total > 0 ? stats.std.toFixed(2) : '—'}`;
+
+      requestAnimationFrame(loop);
+    }
+
+    resetAll();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
