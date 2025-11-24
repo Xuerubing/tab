@@ -99,8 +99,13 @@
 
     <label>
       速度：
-      <input id="speed" type="range" min="0.4" max="3" step="0.1" value="1">
-      <span id="speedVal">1.0x</span>
+      <input id="speed" type="range" min="0.2" max="5" step="0.1" value="0.8">
+      <span id="speedVal">0.8x</span>
+    </label>
+
+    <label>
+      <input id="showSwitch" type="checkbox" checked>
+      显示臂切换提示
     </label>
 
     <button id="pauseBtn">暂停</button>
@@ -132,6 +137,7 @@
 
     const speedSlider = document.getElementById('speed');
     const speedVal = document.getElementById('speedVal');
+    const showSwitchCheckbox = document.getElementById('showSwitch');
 
     const pauseBtn = document.getElementById('pauseBtn');
     const resetBtn = document.getElementById('resetBtn');
@@ -144,6 +150,7 @@
     let strategy = strategySelect.value;
     let cParam = parseFloat(cSlider.value);
     let speedFactor = parseFloat(speedSlider.value);
+    let showSwitch = showSwitchCheckbox.checked;
     let paused = false;
 
     levelsVal.textContent = levels;
@@ -182,6 +189,10 @@
       speedVal.textContent = speedFactor.toFixed(1) + 'x';
     });
 
+    showSwitchCheckbox.addEventListener('change', () => {
+      showSwitch = showSwitchCheckbox.checked;
+    });
+
     pauseBtn.addEventListener('click', () => {
       paused = !paused;
       pauseBtn.textContent = paused ? '继续' : '暂停';
@@ -195,14 +206,14 @@
     const W = canvas.width;
     const H = canvas.height;
 
-    const boardBottomY = H * 0.55;          // 上方板区域底部
+    const boardBottomY = H * 0.53;          // 上方板区域底部
     const topMargin = 36;
 
     const histTop = H * 0.58;               // 主直方图区域（绝对计数）
-    const histHeight = H * 0.17;
+    const histHeight = H * 0.18;
     const insetGap = H * 0.02;
     const insetTop = histTop + histHeight + insetGap; // 放大+正态对比区域
-    const insetHeight = H * 0.17;
+    const insetHeight = H - insetTop - 40;
 
     const pegRadius = 3;
     const ballRadius = 4;
@@ -211,8 +222,8 @@
     const spanY = boardBottomY - topMargin;
     const preferredStepXScale = 1.08; // x 间距与 y 间距的比例，让三角网格更均匀
 
-    const baseBallSpeed = 0.022;
-    const baseBallsPerSec = 15;
+    const baseBallSpeed = 0.014;
+    const baseBallsPerSec = 8;
 
     const histTargetBalls = 3200; // 约达到这数量时柱子接近满高
 
@@ -222,6 +233,10 @@
     let ballCount = 0;
     let pegDecisionCount = 0; // 统计撞钉子总决策次数
     let finishedBalls = 0;
+
+    // 最近一次策略选板，用于可视化切换
+    let lastBoardSelection = null; // 0 = A, 1 = B
+    let selectionPulse = 0;        // [0,1]，越大越亮
 
     function getRowGeometry(rowIndex) {
       const cappedRow = Math.max(0, Math.min(levels, rowIndex));
@@ -381,6 +396,8 @@
 
             const pRight = (board === 0 ? pRightA : pRightB);
             this.lastBoard = board;
+            lastBoardSelection = board;
+            selectionPulse = 1;
 
             const r = Math.random();
             if (r < pRight) this.xNorm += 1;
@@ -615,9 +632,71 @@
       ctx.fillStyle = "#000";
       ctx.font = "14px sans-serif";
       ctx.fillText(
-        "上：两板高尔顿板（每球在线 bandit 学习）   中：绝对计数直方图   下：放大相对频率 + 正态对比",
+        "上：两板高尔顿板（每球在线 bandit 学习）   下：绝对计数直方图 + 放大相对频率/正态对比",
         10, 20
       );
+    }
+
+    function drawStrategyIndicator() {
+      const boxW = 180;
+      const boxH = 72;
+      const x = W - boxW - 14;
+      const y = 10;
+
+      const pulse = 0.35 + 0.65 * selectionPulse;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.strokeStyle = "#999";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#333";
+      ctx.fillText("策略驱动选板（最近一次）", x + 10, y + 16);
+
+      const badgeW = 68;
+      const badgeH = 24;
+      const gap = 10;
+      const aColor = `rgba(0,120,255,${lastBoardSelection === 0 ? pulse : 0.28})`;
+      const bColor = `rgba(255,140,0,${lastBoardSelection === 1 ? pulse : 0.28})`;
+
+      ctx.fillStyle = aColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("A 板 (蓝)", x + 16, y + 40);
+
+      ctx.fillStyle = bColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10 + badgeW + gap, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("B 板 (橙)", x + 14 + badgeW + gap, y + 40);
+
+      ctx.fillStyle = "#666";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("提示: 可在上方关闭切换闪烁", x + 10, y + 58);
+
+      // 条纹式覆盖在 peg 区域，避免大面积闪烁
+      if (showSwitch && lastBoardSelection !== null) {
+        const overlayColor = lastBoardSelection === 0
+          ? `rgba(0,120,255,${0.10 * pulse})`
+          : `rgba(255,140,0,${0.10 * pulse})`;
+        const stepY = spanY / (levels + 1);
+        const bandH = stepY * 0.55;
+        ctx.fillStyle = overlayColor;
+        for (let r = 0; r < levels; r++) {
+          const yCenter = topMargin + (r + 1) * stepY;
+          ctx.fillRect(0, yCenter - bandH / 2, W, bandH);
+        }
+      }
+
+      ctx.restore();
     }
 
     function drawPegs() {
@@ -654,11 +733,15 @@
       const dt = timestamp - lastTime;
       lastTime = timestamp;
 
+      // 让策略切换指示逐渐淡出
+      selectionPulse = Math.max(0, selectionPulse - dt * 0.0015);
+
       let stats = computeStats();
 
       if (paused) {
         drawBackground();
         drawPegs();
+        drawStrategyIndicator();
         balls.forEach(b => b.draw(ctx));
         drawHistogram(stats);
         drawDetailInset(stats);
@@ -691,6 +774,7 @@
 
       drawBackground();
       drawPegs();
+      drawStrategyIndicator();
       balls.forEach(b => b.draw(ctx));
       drawHistogram(stats);
       drawDetailInset(stats);
