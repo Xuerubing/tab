@@ -195,14 +195,17 @@
     const W = canvas.width;
     const H = canvas.height;
 
-    const boardBottomY = H * 0.55;          // 上方板区域底部
+    const boardBottomY = H * 0.53;          // 上方板区域底部，留更多空间给堆叠图
     const topMargin = 36;
 
-    const histTop = H * 0.58;               // 主直方图区域（绝对计数）
-    const histHeight = H * 0.17;
-    const insetGap = H * 0.02;
+    const histTop = H * 0.56;               // 主直方图区域（绝对计数）
+    const histHeight = H * 0.15;
+    const insetGap = H * 0.018;
     const insetTop = histTop + histHeight + insetGap; // 放大+正态对比区域
-    const insetHeight = H * 0.17;
+    const insetHeight = H * 0.15;
+    const pileGap = H * 0.016;
+    const pileTop = insetTop + insetHeight + pileGap; // 底部堆叠小球直方图
+    const pileHeight = H - pileTop - 26;
 
     const pegRadius = 3;
     const ballRadius = 4;
@@ -222,6 +225,10 @@
     let ballCount = 0;
     let pegDecisionCount = 0; // 统计撞钉子总决策次数
     let finishedBalls = 0;
+
+    // 最近一次策略选板，用于可视化切换
+    let lastBoardSelection = null; // 0 = A, 1 = B
+    let selectionPulse = 0;        // [0,1]，越大越亮
 
     function getRowGeometry(rowIndex) {
       const cappedRow = Math.max(0, Math.min(levels, rowIndex));
@@ -381,6 +388,8 @@
 
             const pRight = (board === 0 ? pRightA : pRightB);
             this.lastBoard = board;
+            lastBoardSelection = board;
+            selectionPulse = 1;
 
             const r = Math.random();
             if (r < pRight) this.xNorm += 1;
@@ -604,6 +613,69 @@
       ctx.stroke();
     }
 
+    // 底部堆叠小球的直方图（用小球数量表示频数）
+    function drawBallStacks() {
+      const spanX = W * 0.72;
+      const leftX = (W - spanX) / 2;
+      const barWidth = spanX / bins.length;
+      const ballSize = 3;
+      const pitchY = ballSize * 2 + 2;
+      const maxRows = Math.max(1, Math.floor(pileHeight / pitchY));
+
+      ctx.fillStyle = "#fdf7f2";
+      ctx.fillRect(leftX - 8, pileTop - 8, spanX + 16, pileHeight + 16);
+
+      let needScaleHint = false;
+
+      for (let i = 0; i < bins.length; i++) {
+        const count = bins[i];
+        const perRow = Math.max(1, Math.floor(barWidth / (ballSize * 2 + 2)));
+        const maxBallsFit = perRow * maxRows;
+        const scaleFactor = Math.max(1, Math.ceil(count / maxBallsFit));
+        const drawCount = Math.min(count, maxBallsFit);
+        needScaleHint = needScaleHint || scaleFactor > 1;
+
+        for (let j = 0; j < drawCount; j++) {
+          const row = Math.floor(j / perRow);
+          const col = j % perRow;
+          const x = leftX + i * barWidth + (col + 0.5) * (barWidth / perRow);
+          const y = pileTop + pileHeight - (row + 0.5) * pitchY;
+          const alpha = 0.35 + 0.6 * Math.random();
+          ctx.beginPath();
+          ctx.arc(x, y, ballSize, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${80 + (i % 5) * 35}, ${120 + (i % 3) * 45}, 200, ${alpha})`;
+          ctx.fill();
+        }
+
+        // 标注真实数量
+        ctx.fillStyle = "#333";
+        ctx.font = "11px sans-serif";
+        ctx.fillText(count.toString(), leftX + i * barWidth + barWidth * 0.25, pileTop + pileHeight + 12);
+
+        if (scaleFactor > 1) {
+          ctx.fillStyle = "#c44";
+          ctx.font = "10px sans-serif";
+          ctx.fillText(`÷${scaleFactor}`, leftX + i * barWidth + barWidth * 0.32, pileTop + 12);
+        }
+      }
+
+      ctx.fillStyle = "#555";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("堆叠球数：每个小球代表 1 次落点，必要时自动压缩比例", leftX, pileTop - 10);
+      if (needScaleHint) {
+        ctx.fillStyle = "#aa3333";
+        ctx.font = "11px sans-serif";
+        ctx.fillText("提示：出现 ÷k 说明该列数量过多，已按 k 倍压缩后再堆叠", leftX + 320, pileTop - 10);
+      }
+
+      // x 轴
+      ctx.strokeStyle = "#000";
+      ctx.beginPath();
+      ctx.moveTo(leftX, pileTop + pileHeight);
+      ctx.lineTo(leftX + spanX, pileTop + pileHeight);
+      ctx.stroke();
+    }
+
     function drawBackground() {
       ctx.clearRect(0, 0, W, H);
       ctx.strokeStyle = "#dddddd";
@@ -618,6 +690,59 @@
         "上：两板高尔顿板（每球在线 bandit 学习）   中：绝对计数直方图   下：放大相对频率 + 正态对比",
         10, 20
       );
+    }
+
+    function drawStrategyIndicator() {
+      const boxW = 180;
+      const boxH = 56;
+      const x = W - boxW - 14;
+      const y = 10;
+
+      const pulse = 0.35 + 0.65 * selectionPulse;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.strokeStyle = "#999";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#333";
+      ctx.fillText("策略驱动选板（最近一次）", x + 10, y + 16);
+
+      const badgeW = 68;
+      const badgeH = 24;
+      const gap = 10;
+      const aColor = `rgba(0,120,255,${lastBoardSelection === 0 ? pulse : 0.28})`;
+      const bColor = `rgba(255,140,0,${lastBoardSelection === 1 ? pulse : 0.28})`;
+
+      ctx.fillStyle = aColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("A 板", x + 28, y + 40);
+
+      ctx.fillStyle = bColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10 + badgeW + gap, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("B 板", x + 28 + badgeW + gap, y + 40);
+
+      // 半透明覆盖在 peg 区域，直观显示当前策略在切换
+      if (lastBoardSelection !== null) {
+        const overlayColor = lastBoardSelection === 0
+          ? `rgba(0,120,255,${0.12 * pulse})`
+          : `rgba(255,140,0,${0.12 * pulse})`;
+        ctx.fillStyle = overlayColor;
+        ctx.fillRect(0, topMargin, W, boardBottomY - topMargin);
+      }
+
+      ctx.restore();
     }
 
     function drawPegs() {
@@ -654,14 +779,19 @@
       const dt = timestamp - lastTime;
       lastTime = timestamp;
 
+      // 让策略切换指示逐渐淡出
+      selectionPulse = Math.max(0, selectionPulse - dt * 0.0015);
+
       let stats = computeStats();
 
       if (paused) {
         drawBackground();
         drawPegs();
+        drawStrategyIndicator();
         balls.forEach(b => b.draw(ctx));
         drawHistogram(stats);
         drawDetailInset(stats);
+        drawBallStacks();
 
         const totalDecisions = boardCounts[0] + boardCounts[1];
         const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
@@ -691,9 +821,11 @@
 
       drawBackground();
       drawPegs();
+      drawStrategyIndicator();
       balls.forEach(b => b.draw(ctx));
       drawHistogram(stats);
       drawDetailInset(stats);
+      drawBallStacks();
 
       const totalDecisions = boardCounts[0] + boardCounts[1];
       const ratioA = totalDecisions > 0 ? (boardCounts[0] / totalDecisions) : 0;
