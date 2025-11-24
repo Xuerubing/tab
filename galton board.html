@@ -193,6 +193,10 @@
       showSwitch = showSwitchCheckbox.checked;
     });
 
+    showSwitchCheckbox.addEventListener('change', () => {
+      showSwitch = showSwitchCheckbox.checked;
+    });
+
     pauseBtn.addEventListener('click', () => {
       paused = !paused;
       pauseBtn.textContent = paused ? '继续' : '暂停';
@@ -241,6 +245,10 @@
     function resetRowBands() {
       rowBandPulses = new Array(levels).fill(null).map(() => ({ board: null, pulse: 0 }));
     }
+
+    // 最近一次策略选板，用于可视化切换
+    let lastBoardSelection = null; // 0 = A, 1 = B
+    let selectionPulse = 0;        // [0,1]，越大越亮
 
     function getRowGeometry(rowIndex) {
       const cappedRow = Math.max(0, Math.min(levels, rowIndex));
@@ -711,6 +719,68 @@
       ctx.fillStyle = "#666";
       ctx.font = "11px sans-serif";
       ctx.fillText("提示: 行色带可用上方开关关闭", x + 10, y + 58);
+
+      ctx.restore();
+    }
+
+    function drawStrategyIndicator() {
+      const boxW = 180;
+      const boxH = 72;
+      const x = W - boxW - 14;
+      const y = 10;
+
+      const pulse = 0.35 + 0.65 * selectionPulse;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.strokeStyle = "#999";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#333";
+      ctx.fillText("策略驱动选板（最近一次）", x + 10, y + 16);
+
+      const badgeW = 68;
+      const badgeH = 24;
+      const gap = 10;
+      const aColor = `rgba(0,120,255,${lastBoardSelection === 0 ? pulse : 0.28})`;
+      const bColor = `rgba(255,140,0,${lastBoardSelection === 1 ? pulse : 0.28})`;
+
+      ctx.fillStyle = aColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("A 板 (蓝)", x + 16, y + 40);
+
+      ctx.fillStyle = bColor;
+      ctx.beginPath();
+      ctx.roundRect(x + 10 + badgeW + gap, y + 24, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText("B 板 (橙)", x + 14 + badgeW + gap, y + 40);
+
+      ctx.fillStyle = "#666";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("提示: 可在上方关闭切换闪烁", x + 10, y + 58);
+
+      // 条纹式覆盖在 peg 区域，避免大面积闪烁
+      if (showSwitch && lastBoardSelection !== null) {
+        const overlayColor = lastBoardSelection === 0
+          ? `rgba(0,120,255,${0.10 * pulse})`
+          : `rgba(255,140,0,${0.10 * pulse})`;
+        const stepY = spanY / (levels + 1);
+        const bandH = stepY * 0.55;
+        ctx.fillStyle = overlayColor;
+        for (let r = 0; r < levels; r++) {
+          const yCenter = topMargin + (r + 1) * stepY;
+          ctx.fillRect(0, yCenter - bandH / 2, W, bandH);
+        }
+      }
 
       ctx.restore();
     }
